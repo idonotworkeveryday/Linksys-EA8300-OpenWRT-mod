@@ -1,0 +1,52 @@
+name: Build Overclocked EA8300
+
+on:
+  workflow_dispatch: # Allows you to start it manually
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04 # Latest stable runner
+
+    steps:
+      - name: Checkout Buildroot
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison g++ gawk \
+            gettext git libncurses5-dev libssl-dev python3-setuptools \
+            rsync swig unzip zlib1g-dev file wget python3-distutils
+
+      - name: Clone OpenWrt v25.12.2
+        run: |
+          git clone --depth 1 --branch v25.12.2 https://github.com/openwrt/openwrt.git
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Inject 896MHz Overclock
+        run: |
+          cd openwrt
+          # Using a safer search/replace for the IPQ4019 DTS
+          TARGET_FILE="target/linux/ipq40xx/files/arch/arm/boot/dts/qcom-ipq4019.dtsi"
+          
+          # This appends the 896MHz node specifically after the 716MHz node
+          sed -i '/opp-716100000 {/,/};/ a \\n\t\topp-896000000 {\n\t\t\topp-hz = /bits/ 64 <896000000>;\n\t\t\topp-microvolt = <1150000>;\n\t\t\tclock-latency-ns = <200000>;\n\t\t};' $TARGET_FILE
+
+      - name: Build Firmware
+        run: |
+          cd openwrt
+          # Basic EA8300 config - you can expand this
+          echo 'CONFIG_TARGET_ipq40xx=y' > .config
+          echo 'CONFIG_TARGET_ipq40xx_generic=y' >> .config
+          echo 'CONFIG_TARGET_ipq40xx_generic_DEVICE_linksys_ea8300=y' >> .config
+          
+          make defconfig
+          make -j$(nproc) || make -j1 V=s
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: EA8300-Overclocked-v25.12.2
+          path: openwrt/bin/targets/ipq40xx/generic/*.bin
